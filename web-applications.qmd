@@ -1,0 +1,772 @@
+---
+title: "Building Web Mapping Applications with R and Shiny"
+format: 
+  html: 
+    theme: zephyr
+    self-contained: true
+editor: visual
+author: "Kyle Walker"
+date: "May 22, 2024"
+toc: true
+eval: false
+---
+
+```{r setup, include = FALSE}
+options(tigris_use_cache = TRUE)
+```
+
+## Introduction
+
+In this tutorial, you'll learn the fundamentals of building interactive web mapping applications with R and Shiny. I've been working with Shiny for over a decade, largely using the framework to build interactive web maps for clients or to communicate information from my various research projects. We'll be building interactive Shiny apps from the ground up.
+
+Before we dive in too far, let's go over some basic vocabulary. If you are new to R, you'll want to know these terms:
+
+-   **Variables** are objects in R that store / reference some value. They are created through *assignment*, and R's assignment operator is the arrow sign `<-`. You can also use `=` if you're more comfortable using a single keystroke.
+
+```{r variable}
+x <- 2
+x
+```
+
+-   **Vectors** are a special type of object that can contain multiple objects. They can (and often do) contain variables, but they can also contain character strings or numbers. We create them with `c()`:
+
+```{r vector}
+numbers <- c(1, 2, 3, 4, 5)
+numbers
+```
+
+`c()` is an example of a **function**, which is a command in R that performs a specific task, or potentially a sequence of related tasks. For example, we can use the functions `sum()` and `mean()` to calculate the sum and mean, respectively, of our vector.
+
+```{r}
+sum(numbers)
+mean(numbers)
+```
+
+A common function you'll use is `install.packages()`, which installs external libraries of code you'll want to use in your projects. There are many thousands of R packages you can use. We'll be using a few, which you can install with the command below.
+
+```{r, eval = FALSE}
+install.packages(c("shiny", "glue", "tidycensus", "leaflet",
+                   "mapboxapi", "bslib", "tidyverse"))
+```
+
+### Format of the workshop
+
+A tutorial on Shiny apps functions differently than other R tutorials, as much of the code we'll be going through today is not designed to run as self-contained blocks. Instead, we'll be building web mapping applications with Shiny step-by-step, from the ground up. Instead of "plugging in" bits of code to a main template file, we'll be using a series of R scripts I've prepared for you that illustrate each of the steps. The scripts used in Part 1 have the "part-1" prefix, and those used in Part 1 have the "part-2" prefix.
+
+# Part 1: Getting started with web mapping in Shiny
+
+## Shiny: the basics
+
+Script: `part-1-app-1.R`
+
+Shiny is a framework designed to help developers create web applications and share their work. I've been developing in Shiny for over a decade, and I find it to be the "sweet spot" for me with respect to interactive application development. Coming from a spatial data science background, building web apps with JavaScript (or one of its various frameworks) can have a steep learning curve; conversely, point-and-click tools like Tableau aren't quite as flexible or customizable as I'd like. Shiny occupies the "middle ground" between these tools. Shiny apps are built directly from R (or Python), which means that you can either connect your existing analysis workflows to a user interface, or even use your favorite packages directly within the app you are building.
+
+Shiny apps are comprised of two components: a **UI**, or user interface, and a **server**. The UI is the part of the app that the user interacts with; it'll include any text, menus, or interactive content that is displayed in the app. The server is what happens "under the hood" of the app. This includes any of the R code that powers what is ultimately displayed in the UI.
+
+I am a huge fan of the [bslib R package](https://rstudio.github.io/bslib/) for templating Shiny apps. bslib includes a variety of functions to help you build user interfaces that are more attractive and smooth, in my opinion, than Shiny's defaults. We'll be working with bslib in this tutorial to template our Shiny apps.
+
+Let's get started with the simplest possible app: a page with a sidebar, but no content. We assign an empty `page_sidebar()` call to the `ui` object, and define an empty server function of format `server <- function(input, output) { }`. The call to `shinyApp()` then runs the app corresponding to the defined UI and server.
+
+``` r
+library(shiny)
+library(bslib)
+
+# Basic app template
+ui <- page_sidebar(
+
+)
+
+server <- function(input, output) {
+  
+}
+
+shinyApp(ui, server)
+```
+
+![](images/clipboard-797421798.png)
+
+The app defaults to a basic white theme with a collapsible sidebar. One of the advantages of using bslib for Shiny templating is the ease with which you can modify this theme and integrate [Bootswatch themes](https://bootswatch.com/), a series of custom Bootstrap styles. To preview available themes for your bslib Shiny app, run any call to `shinyApp()` inside the `run_with_themer()` function.
+
+``` r
+ui <- page_sidebar(
+  title = "My first app"
+)
+
+server <- function(input, output) {
+ 
+}
+
+run_with_themer(shinyApp(ui, server))
+```
+
+![](images/clipboard-153673482.png)
+
+Flip through the "Preset theme" drop-down menu to preview what your app would look like if you choose one of the Bootswatch themes. Once you've selected a theme, you can pass it as an argument to the `bootswatch` parameter inside the `bs_theme()` function. This will apply the theme to your app's UI. Below, I'm choosing the `"yeti"` theme.
+
+``` r
+ui <- page_sidebar(
+  title = "My first app",
+  theme = bs_theme(bootswatch = "yeti")
+)
+
+server <- function(input, output) {
+
+}
+
+shinyApp(ui, server)
+```
+
+![](images/clipboard-3831183422.png)
+
+## Building your first mapping app
+
+Script: `part-1-app-2.R`
+
+Now that we've gotten the hang of how to theme our app's UI, we're going to want to start filling in some content. Your app's UI will typically be characterized by two important components: *inputs*, which allow your user to interact with your app, and *outputs*, which are the results that correspond to those inputs.
+
+Outputs can be displayed without an associated input. Let's add a basic interactive map to our app with the Leaflet R package, an interface to the [Leaflet JavaScript library](https://leafletjs.com/), the most popular open-source web mapping library. Leaflet has phenomenal functionality for interacting with Shiny; we'll explore quite a bit of this functionality in this tutorial.
+
+Interactive visualization packages like Leaflet typically include `render` and `Output` functions to allow for their use in Shiny. In this case, `leafletOutput("map")` will be placed in the app's UI code, and will dictate where the Leaflet map will be rendered in the UI. The `renderLeaflet()` function, which will be found in the server code, controls the content of the map and will be assigned to a property of `output` - in this case `output$map`. You can use any name you'd like instead of `map` - but you'll just want to make sure you are consistent with this throughout your app script. Note how `map` as a property of `output` matches `"map"` inside the call to `leafletOutput()`.
+
+Inside `renderLeaflet()`, we create a simple Leaflet map with `leaflet() |> addTiles()`.
+
+``` r
+library(shiny)
+library(bslib)
+library(leaflet)
+
+ui <- page_sidebar(
+  title = "Interactive map",
+  theme = bs_theme(bootswatch = "yeti"),
+  sidebar = sidebar(
+    p("Explore this interactive map!") 
+  ), 
+  card(
+    leafletOutput("map")
+  )
+)
+
+server <- function(input, output) {
+  output$map <- renderLeaflet({
+    leaflet() |> 
+      addTiles()
+  })
+}
+
+shinyApp(ui, server)
+```
+
+![](images/clipboard-2307776134.png)
+
+We can pan and zoom around the map. However, even though this is *technically* a Shiny app, we don't need Shiny to create this. The point of using Shiny is to build an app that responds to user input as well - not just one that displays outputs.
+
+### Using inputs in Shiny
+
+Script: `part-1-app-3.R`
+
+*Inputs* in Shiny refer to elements of the app that capture user input or user behavior. The Shiny package includes a wide variety of inputs like dropdown menus, radio buttons, and text boxes that are used to modify the output.
+
+Below, we add a dropdown menu with `selectInput()`. The first argument will be the `inputId`, which will be used to represent the value of the input as it is used in the server code. `label` in this instance will be the heading or title above the dropdown menu, and `choices` represents the possible values that the user can choose from. We are using a *named vector* of choices, which you'll often want to do when programming with Shiny. The names of the vector will be displayed to the user in the app, whereas the values of the vector will actually be used in the downstream code.
+
+In the server code, note how we use `input$basemap`, which represents our dropdown menu. We've swapped out `addTiles()` for `addProviderTiles()`; the selected option in the dropdown menu will be used as the argument.
+
+``` r
+library(shiny)
+library(bslib)
+library(leaflet)
+
+ui <- page_sidebar(
+  title = "Interactive map",
+  theme = bs_theme(bootswatch = "yeti"),
+  sidebar = sidebar(
+    p("Explore this interactive map!"),
+    selectInput("basemap", 
+                label = "Choose a basemap",
+                choices = c(
+                  OpenStreetMap = providers$OpenStreetMap,
+                  "CARTO Positron" = providers$CartoDB.Positron,
+                  "CARTO Voyager" = providers$CartoDB.Voyager,
+                  "Stadia Toner" = providers$Stadia.StamenToner
+                ))
+  ), 
+  card(
+    leafletOutput("map")
+  )
+)
+
+server <- function(input, output) {
+  output$map <- renderLeaflet({
+    leaflet() |> 
+      addProviderTiles(provider = input$basemap)
+  })
+}
+
+shinyApp(ui, server)
+```
+
+![](images/clipboard-896708197.png)
+
+How does this work? When the user changes the value in the dropdown menu, the value of `input$basemap` changes. When this happens, `renderLeaflet()` recomputes, and returns a different map.
+
+Now, we'll build in some additional interactivity using this same idea. We'll add a geocoder input, then zoom over to the geocoded location and draw a marker at that location.
+
+Script: `part-1-app-4.R`
+
+``` r
+library(shiny)
+library(bslib)
+library(leaflet)
+library(mapboxapi)
+
+# mb_access_token("pk.eyJ1Ijoia3dhbGtlcnRjdSIsImEiOiJjbHdoN3ZhMnIwNnN4MmtxbWllNWp1eGx1In0.HFJ4XcTsSFLYiyIorvn3xg", install = TRUE)
+
+ui <- page_sidebar(
+  title = "Address finder",
+  theme = bs_theme(bootswatch = "yeti"),
+  sidebar = sidebar(
+  selectInput("basemap", "Choose a basemap",
+          choices = c(
+            OpenStreetMap = providers$OpenStreetMap,
+            "CARTO Positron" = providers$CartoDB.Positron,
+            "CARTO Voyager" = providers$CartoDB.Voyager,
+            "Stadia Toner" = providers$Stadia.StamenToner
+          )),
+    p("Use the geocoder to find an address!"),
+    mapboxGeocoderInput("geocoder",
+                        placeholder = "Search for an address"),
+    width = 300
+  ), 
+  card(
+    leafletOutput("map")
+  )
+)
+
+server <- function(input, output) {
+  output$map <- renderLeaflet({
+    leaflet() |> 
+      addProviderTiles(provider = input$basemap) |> 
+      addMarkers(
+        data = geocoder_as_sf(input$geocoder)
+      )
+  })
+}
+
+shinyApp(ui, server)
+```
+
+![](images/clipboard-4020987842.png)
+
+The app appears to fail on first draw. After we enter an address, the map draws, and will work subsequently after that. The error message, `is.numeric(x) is not TRUE`, is opaque; however, we can logically understand why this happens. As we have it written, `renderLeaflet()` requires a geocoded location for the map to render. As we don't have one yet before the user has selected an address, the app can't render the map. While this is fine for exploratory purposes, it doesn't work well for user experience. If the app fails to work when it first loads, this doesn't build a lot of trust in the user that you've created something useful for them. Fortunately, Shiny includes quite a bit of functionality for handling these types of situations with *observers* and *reactive* elements.
+
+## Using observers and reactivity
+
+Script: `part-1-app-5.R`
+
+We ran into problems in the previous section because our app was trying to compute everything all at once. The map, which adds a basemap *and* a marker, depends on its two inputs: the `selectInput()` for identifying the basemap, and the `mapboxGeocoderInput()` for identifying the location where the marker should be placed. While we had a default value set for the basemap input, we did not have such a value for the geocoder - so the app fails to draw the map.
+
+Instead, we want to set up a workflow where the marker is drawn *after* the user specifies an address. We can control this with *observers* and / or *reactive expressions*.
+
+Observers and reactive expressions are related, but distinct, elements of your app. Each will typically be triggered in response to user input or user interaction with your app.
+
+-   **Reactive expressions**, commonly expressed with the `reactive()` function, act like functions in your app that return a different value depending on user input.
+
+-   **Observers**, expressed with the `observe()` function, are similar to reactive expressions but differ in that they are called for their *side effect*. As such, no value is returned.
+
+Reactive expressions and observers can both be piped to the `bindEvent()` function to attach them to *events* that happen in your app. You can think of events as "things that happen in your app." This might mean the modification of an input, a user clicking on the map, a user clicking on a button, or many other things. Using `bindEvent()` means that the observer or reactive expression will only be called *in response to* the specific user interaction, helping you control the flow of your code's execution in your Shiny app.
+
+Let's see how this works. We'll set up the app almost the exact same way, but we'll move our inputs into observers. One observer will respond to the user changing the map's basemap, and the other observer will respond to the user choosing a location with the geocoder. We will remove the dependencies on these inputs in `renderLeaflet()`, choosing a default starting location instead with `setView()` and a default basemap.
+
+``` r
+ui <- page_sidebar(
+  title = "Address finder",
+  theme = bs_theme(bootswatch = "yeti"),
+  sidebar = sidebar(
+  selectInput("basemap", "Choose a basemap",
+          choices = c(
+            OpenStreetMap = providers$OpenStreetMap,
+            "CARTO Positron" = providers$CartoDB.Positron,
+            "CARTO Voyager" = providers$CartoDB.Voyager,
+            "Stadia Toner" = providers$Stadia.StamenToner
+          )),
+    p("Use the geocoder to find an address!"),
+    mapboxGeocoderInput("geocoder",
+                        placeholder = "Search for an address"),
+    width = 300
+  ), 
+  card(
+    leafletOutput("map")
+  )
+)
+
+server <- function(input, output) {
+  output$map <- renderLeaflet({
+    leaflet() |> 
+      addProviderTiles(provider = providers$OpenStreetMap) |> 
+      setView(lng = -96.805,
+              lat = 32.793,
+              zoom = 12)
+  })
+  
+  observe({
+    leafletProxy("map") |> 
+      clearTiles() |> 
+      addProviderTiles(provider = input$basemap)
+  }) |> 
+    bindEvent(input$basemap)
+  
+  observe({
+    xy <- geocoder_as_xy(input$geocoder)
+    
+    leafletProxy("map") |> 
+      clearMarkers() |> 
+      addMarkers(
+        lng = xy[1],
+        lat = xy[2]
+      ) |> 
+      flyTo(lng = xy[1],
+            lat = xy[2],
+            zoom = 14)
+  }) |> 
+    bindEvent(input$geocoder, ignoreNULL = TRUE)
+}
+
+shinyApp(ui, server)
+```
+
+![](images/clipboard-4162299604.png)
+
+Let's spend a bit more time breaking down the observer code:
+
+``` r
+observe({
+  leafletProxy("map") |> 
+    clearTiles() |> 
+    addProviderTiles(provider = input$basemap)
+}) |> 
+  bindEvent(input$basemap)
+
+observe({
+  xy <- geocoder_as_xy(input$geocoder)
+  
+  leafletProxy("map") |> 
+    clearMarkers() |> 
+    addMarkers(
+      lng = xy[1],
+      lat = xy[2]
+    ) |> 
+    flyTo(lng = xy[1],
+          lat = xy[2],
+          zoom = 14)
+}) |> 
+  bindEvent(input$geocoder, ignoreNULL = TRUE)
+```
+
+The first call to `observe()` handles the basemap, and the second `observe()` handles the geocoder. Note the use of `leafletProxy()` in both observers. `leafletProxy()` will remember the current state of the Leaflet map and will make modifications to it without re-drawing the entire map. We want to use two separate observers here - and move both actions outside of `renderLeaflet()` - as we want the result of one of the inputs to remain the same if the other changes.
+
+The argument `ignoreNULL = TRUE` helps us out when binding the geocoder event to the second observer. This means that if the value of `input$geocoder` is missing, Shiny won't try to place a marker. Now, our app runs smoothly.
+
+# Part 2: Building data-driven apps
+
+In Part 1, you got experience building a web mapping application from the ground up that responds to user input. In most cases, you'll want to do more that this with your Shiny web mapping apps. In particular, you may want to visualize data on a map and allow users to interact with that dataset. Additionally, you may want to build out a dashboard-style interface that helps users understand a concept from multiple angles.
+
+In Part 2 of this workshop, we'll build out a web mapping app with Shiny that allows users to explore data from the 2020 Decennial US Census. If you want more instruction on working with 2020 Census data, [I'd encourage you to check out my workshops on the topic](https://walkerdata.gumroad.com/l/census-workshop-bundle?layout=profile).
+
+## Building an interactive data app
+
+Script: `part-2-app-1.R`
+
+We'll be designing an app that helps users explore the age structure of neighborhoods across the United States, using data from the 2020 US Census. When you are working in R, you'll frequently use functions that fetch data from a variety of sources or perform calculations.
+
+The example below uses the `get_decennial()` function in the tidycensus R package to request data on median age (Census variable `P13_001N`) from the 2020 US Census Demographic and Housing Characteristics file for Census tracts in the state of Delaware. The argument `geometry = TRUE` fetches the Census tract shapes along with the data.
+
+```{r}
+#| message: false
+#| warning: false
+library(tidycensus)
+
+get_decennial(
+  geography = "tract",
+  variables = "P13_001N",
+  state = "DE",
+  sumfile = "dhc",
+  geometry = TRUE
+)
+```
+
+Outside of Shiny, we could readily map this data with any of R's interactive mapping tools. However, we want to allow our users to map this data without having to use R. Ideally, our users would be able to select any state they want, then display the data on a map.
+
+We can accomplish this by wrapping our `get_decennial()` call in a **reactive expression**. Recall from Part 1 that reactive expressions differ from observers in that they return a value, not a side effect. By doing this, we can use a reactive expression to grab data on median age by Census tract for any state we want depending on what the user requests. If the user's request changes, the data available to us should change as well.
+
+Let's take a look at how this works.
+
+``` r
+library(shiny)
+library(bslib)
+library(leaflet)
+library(tidycensus)
+options(tigris_use_cache = TRUE)
+
+ui <- page_sidebar(
+  title = "Median age explorer",
+  sidebar = sidebar(
+    p("This app allows you to visualize median age by Census tract in a state of your choice."),
+    selectInput("state", "Select a state to map", choices = state.name,
+                selected = "Delaware"),
+    width = 300
+  ), 
+  card(
+    leafletOutput("map")
+  )
+)
+
+server <- function(input, output) {
+  state_data <- reactive({
+    get_decennial(
+      geography = "tract",
+      variables = "P13_001N",
+      state = input$state,
+      sumfile = "dhc",
+      geometry = TRUE
+    )
+  })
+  
+  output$map <- renderLeaflet({
+    leaflet() |> 
+      addTiles() |> 
+      addPolygons(
+        data = state_data(),
+        label = ~value
+      )
+  })
+}
+
+shinyApp(ui, server)
+```
+
+![](images/clipboard-1314215929.png)
+
+We've generated an interactive app that allows users to select a state then display data on median age by Census tract on a map for that state. There are a couple key components we'll need to understand in more detail to get a sense of how this works.
+
+Our `selectInput()` looks like this:
+
+``` r
+selectInput("state", "Select a state to map", choices = state.name,
+            selected = "Delaware")
+```
+
+The vector we pass to `choices` is `state.name`, a built-in R object that contains all of the names of the 50 US states. We use the selected state name in the following reactive expression:
+
+``` r
+state_data <- reactive({
+  get_decennial(
+    geography = "tract",
+    variables = "P13_001N",
+    state = input$state,
+    sumfile = "dhc",
+    geometry = TRUE
+  )
+})
+```
+
+`state_data()` is then called inside `renderLeaflet()` to draw the Census tract shapes along with the map.
+
+### Styling the map
+
+Script: `part-2-app-2.R`
+
+While you can explore the data on the interactive map, the visual presentation is clunky by default. We'll want to create a smoother-looking map that represents the underlying data visually. We'll be creating a *choropleth map*, a type of map that shows statistical variation in a dataset by mapping data values to a color palette. This doesn't require any modification to our Shiny-specific code; instead, [we can use Leaflet's color palette functionality to map our data](https://rstudio.github.io/leaflet/articles/colors.html).
+
+``` r
+ui <- page_sidebar(
+  title = "Median age explorer",
+  sidebar = sidebar(
+    p("This app allows you to visualize median age by Census tract in a state of your choice."),
+    selectInput("state", "Select a state to map", choices = state.name,
+                selected = "Delaware"),
+    width = 300
+  ), 
+  card(
+    leafletOutput("map")
+  )
+)
+
+server <- function(input, output) {
+  state_data <- reactive({
+    get_decennial(
+      geography = "tract",
+      variables = "P13_001N",
+      state = input$state,
+      sumfile = "dhc",
+      geometry = TRUE
+    )
+  })
+  
+  output$map <- renderLeaflet({
+    
+    my_state <- state_data()
+    
+    pal <- colorNumeric("viridis", my_state$value)
+
+    leaflet() |> 
+      addProviderTiles(providers$CartoDB.Positron) |> 
+      addPolygons(
+        data = my_state,
+        color = ~pal(value),
+        weight = 0.5,
+        fillOpacity = 0.5,
+        smoothFactor = 0.2,
+        label = ~value
+      ) |> 
+      addLegend(
+        position = "topright",
+        pal = pal,
+        values = my_state$value,
+        title = "Median age<br>2020 US Census"
+      )
+  })
+}
+
+shinyApp(ui, server)
+```
+
+![](images/clipboard-3694736761.png)
+
+Note how we generate a color palette function named `pal()`, then apply that function to the `value` column in our data. We'll clean up the appearance by modifying the line weight, smooth factor, and fill opacity, and we'll add an informative legend to the map.
+
+## Collecting and using "events"
+
+Script: `part-2-app-3.R`
+
+When building interactive web mapping applications with Shiny, not all inputs will be directly tied to UI elements like dropdown menus and geocoders. The Leaflet R package itself is designed to collect map events as inputs to be used in a Shiny environment.
+
+What does this mean, exactly? Users can interact with our map of median age in a variety of different ways. They can zoom and pan around the map; they can hover their cursor over a given Census tract; and they can click on the map or on a Census tract.
+
+As the map is currently configured, not much happens other than the appearance of a hover tooltip indicating the tract's median age using a feature built-in to R's Leaflet. Let's add a reactive expression that gets the GEOID of the clicked Census tract, and print that value to the sidebar.
+
+``` r
+library(glue)
+
+ui <- page_sidebar(
+  title = "Median age explorer",
+  sidebar = sidebar(
+    p("This app allows you to visualize median age by Census tract in a state of your choice."),
+    selectInput("state", "Select a state to map", choices = state.name,
+                selected = "Delaware"),
+    textOutput("tract_text"),
+    width = 300
+  ), 
+  card(
+    leafletOutput("map")
+  )
+)
+
+server <- function(input, output) {
+  state_data <- reactive({
+    get_decennial(
+      geography = "tract",
+      variables = "P13_001N",
+      state = input$state,
+      sumfile = "dhc",
+      geometry = TRUE
+    )
+  })
+  
+  output$map <- renderLeaflet({
+    
+    my_state <- state_data()
+    
+    pal <- colorNumeric("viridis", my_state$value)
+
+    leaflet() |> 
+      addProviderTiles(providers$CartoDB.Positron) |> 
+      addPolygons(
+        data = my_state,
+        color = ~pal(value),
+        weight = 0.5,
+        fillOpacity = 0.5,
+        smoothFactor = 0.2,
+        label = ~value, 
+        layerId = ~GEOID
+      ) |> 
+      addLegend(
+        position = "topright",
+        pal = pal,
+        values = my_state$value,
+        title = "Median age<br>2020 US Census"
+      )
+  })
+  
+  clicked_tract <- reactive({
+    input$map_shape_click$id
+  }) |> 
+    bindEvent(input$map_shape_click, ignoreNULL = TRUE)
+  
+  output$tract_text <- renderPrint({
+    glue("You clicked on Census tract {clicked_tract()}")
+  })
+  
+}
+
+shinyApp(ui, server)
+```
+
+![](images/clipboard-1563302297.png)
+
+Let's break this down a bit more. Our new server code is here:
+
+``` r
+clicked_tract <- reactive({
+  input$map_shape_click$id
+}) |> 
+  bindEvent(input$map_shape_click, ignoreNULL = TRUE)
+
+output$tract_text <- renderPrint({
+  glue("You clicked on Census tract {clicked_tract()}")
+})
+```
+
+The reactive expression `clicked_tract()` is bound to the event `input$map_shape_click`. The value returned is `input$map_shape_click$id`, which we can read as "The `id` property of the clicked Census tract shape found in the output map named `map`." In our call to `addPolygons()`, we used the code `layerId = ~GEOID` to ensure that the GEOID - a unique code representing the Census tract - will be found in the `id` property.
+
+In the UI, we use `textOutput("tract_text")` to print out the clicked GEOID.
+
+Printing out the clicked GEOID may be interesting in some cases, e.g. if you are designing an app where users can get custom information about the places they've clicked. In our case, this functionality isn't very meaningful. Where this value is most useful is when it is linked to other processes that would require knowing the GEOID of the clicked Census tract. In the next example, we'll use this information to build out a dynamic dashboard that responds to user behavior.
+
+## Linking maps and charts
+
+Script: `median-age-explorer.R`
+
+While median age is a useful metric that clearly exhibits distinctive patterns by neighborhood around the 50 US states, it doesn't tell us the whole story about the age structure of neighborhoods. Let's build out a more complex app (using some more advanced code) that draws a chart showing the age profile of a given Census tract when the tract is clicked.
+
+```{r}
+library(tidyverse)
+
+ui <- page_sidebar(
+  title = "Median age explorer",
+  sidebar = sidebar(
+    p("This app allows you to visualize median age by Census tract in a state of your choice."),
+    selectInput("state", "Select a state to map", choices = state.name,
+                selected = "Delaware"),
+    textOutput("tract_text"),
+    width = 300
+  ), 
+  card(
+    leafletOutput("map")
+  ),
+  card(
+    card_header("Click the map to show a chart"),
+    plotOutput("chart"), max_height = "250px", 
+  )
+)
+
+server <- function(input, output) {
+  state_data <- reactive({
+    get_decennial(
+      geography = "tract",
+      variables = "P13_001N",
+      state = input$state,
+      sumfile = "dhc",
+      geometry = TRUE
+    )
+  })
+  
+  output$map <- renderLeaflet({
+    
+    my_state <- state_data()
+    
+    pal <- colorNumeric("viridis", my_state$value)
+    
+    leaflet() |> 
+      addProviderTiles(providers$CartoDB.Positron) |> 
+      addPolygons(
+        data = my_state,
+        color = ~pal(value),
+        weight = 0.5,
+        fillOpacity = 0.5,
+        smoothFactor = 0.2,
+        label = ~value, 
+        layerId = ~GEOID
+      ) |> 
+      addLegend(
+        position = "topright",
+        pal = pal,
+        values = my_state$value,
+        title = "Median age<br>2020 US Census"
+      )
+  })
+  
+  clicked_tract <- reactive({
+    input$map_shape_click$id
+  }) |> 
+    bindEvent(input$map_shape_click, ignoreNULL = TRUE)
+  
+  age_profile_data <- reactive({
+    age_profile_vars <- glue("DP1_00{str_pad(2:19, 2, 'left', '0')}P")
+    
+    get_decennial(
+      geography = "tract",
+      variables = age_profile_vars,
+      state = input$state,
+      year = 2020, 
+      sumfile = "dp"
+    ) |> 
+      filter(GEOID == clicked_tract())
+  }) |> 
+    bindEvent(clicked_tract(), ignoreNULL = TRUE)
+  
+  output$tract_text <- renderPrint({
+    glue("Selected Census tract: {clicked_tract()}, {input$state}")
+  })
+  
+  output$chart <- renderPlot({
+    
+    age_labels <- c("0-4", "5-9", "10-14", "15-19",
+                    "20-24", "25-29", "30-34", "35-39",
+                    "40-44", "45-49", "50-54", "55-59",
+                    "60-64", "65-69", "70-74", "75-79",
+                    "80-84", "85+")
+    
+    ggplot(age_profile_data(), aes(x = variable, y = value)) +
+      geom_col(fill = "darkgreen", alpha = 0.8) +
+      theme_minimal(base_size = 16) + 
+      scale_x_discrete(labels = age_labels) + 
+      scale_y_continuous(labels = scales::label_percent(scale = 1)) + 
+      theme(
+        axis.text.x = element_text(angle = 45)
+      ) + 
+      labs(x = "Age cohort in Census tract",
+           y = "Percent")
+  })
+  
+}
+
+shinyApp(ui, server)
+
+```
+
+![](images/clipboard-996635169.png)
+
+While the app is now more complex than before, it re-uses principles that we've worked on to build out our apps in this workshop. The main new components include:
+
+-   An additional `card()` in our UI which will hold the output `"chart"`;
+
+-   A new reactive expression named `age_profile_data` that pulls data on population percentages by age cohort from the 2020 Demographic Profile, a dataset that includes a variety of pre-tabulated figures from the 2020 Census. `age_profile_data` is bound to the `clicked_tract()` event. It works by pulling data for the currently-selected state, then filtering down that data to isolate data for the clicked Census tract.
+
+-   A new output, `output$chart`, that builds the age profile chart with ggplot2. We note the use of `age_profile_data()` as the data object used to draw the chart; this means that a new chart will be drawn each time a user clicks on a Census tract.
+
+## Finding inefficiencies in your app
+
+You'll sometimes hear criticisms of Shiny that it is "slow." I used to think this myself, but with experience I've been able to speed up my apps to the point that I don't notice a big difference between apps I write with Shiny and those I write in pure JavaScript. The main problem with a lot of Shiny apps - and this includes the one we just wrote, by the way - is that they take too much advantage of Shiny's ability to execute R code. In turn, it is often the R code being executed that is slow, not Shiny per se - so as a developer, you may want to look for ways to move this execution time outside your apps.
+
+How does this work? The rule I live by when designing "production" apps (that is, those that will be published or used by others) is to only execute code in-app that is absolutely necessary. For developers new to Shiny but more experienced with R, it can be difficult to disentangle this. In our case, data download times are causing a bottleneck. Every time a different state is selected, and every time a Census tract is clicked, tidycensus is used to make a request to the Census API and download data. This makes the app laggy when used to explore larger states like California and Texas.
+
+To resolve this, my preference is to fetch any needed data *prior to* executing the app, rather than making the app fetch the data for me. This data is then stored in the app's directory (or a directory accessible to it); read in by the app; then filtered as needed.
+
+## Deploying your app
+
+There are a few ways to deploy and host your Shiny apps. Businesses and organizations might be interested in a [Posit Connect account](https://posit.co/products/enterprise/connect/), which gives you enterprise-level ability to host, manage, and deploy apps. [Shiny Server](https://posit.co/products/open-source/shinyserver/) is a free and open-source solution for hosting and deploying Shiny apps to the web, though it requires more technical expertise to set up. For most users, the easiest way to share apps is through Posit's hosted service ShinyApps.io.
+
+RStudio you'll see an option to "Publish Application." If you don't have a ShinyApps.io account, you'll need to sign up for one and then click "Add new account" to connect it to RStudio. You'll deploy the app script along with any external data / styling resources so the app will run correctly.
+
+![](images/clipboard-2633396238.png)
+
+Once your app is published, it'll be ready to share with the world! My app is available at <https://walkerke.shinyapps.io/median-age>.
