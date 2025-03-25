@@ -9,7 +9,6 @@ ui <- page_sidebar(
   sidebar = sidebar(
     selectInput("basemap", "Choose a basemap",
       choices = c(
-        OpenStreetMap = providers$OpenStreetMap,
         "CARTO Positron" = providers$CartoDB.Positron,
         "CARTO Voyager" = providers$CartoDB.Voyager,
         "Stadia Toner" = providers$Stadia.StamenToner
